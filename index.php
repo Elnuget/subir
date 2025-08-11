@@ -84,9 +84,110 @@ function parseIniSize($size) {
 
 // Función para formatear bytes
 function formatBytes($size, $precision = 2) {
+    if ($size == 0) return '0 B';
     $base = log($size, 1024);
     $suffixes = array('B', 'KB', 'MB', 'GB', 'TB');
     return round(pow(1024, $base - floor($base)), $precision) .' '. $suffixes[floor($base)];
+}
+
+// Función para obtener la lista de archivos subidos
+function getUploadedFiles($directory = 'uploads/') {
+    $files = [];
+    
+    if (!is_dir($directory)) {
+        return $files;
+    }
+    
+    $scandir = scandir($directory);
+    foreach ($scandir as $file) {
+        if ($file !== '.' && $file !== '..') {
+            $filepath = $directory . $file;
+            if (is_file($filepath)) {
+                $files[] = [
+                    'name' => $file,
+                    'path' => $filepath,
+                    'size' => filesize($filepath),
+                    'modified' => filemtime($filepath),
+                    'type' => mime_content_type($filepath) ?: 'Desconocido',
+                    'extension' => strtolower(pathinfo($file, PATHINFO_EXTENSION))
+                ];
+            }
+        }
+    }
+    
+    // Ordenar por fecha de modificación (más reciente primero)
+    usort($files, function($a, $b) {
+        return $b['modified'] - $a['modified'];
+    });
+    
+    return $files;
+}
+
+// Función para eliminar archivo
+function deleteFile($filename, $directory = 'uploads/') {
+    $filepath = $directory . basename($filename);
+    
+    // Verificar que el archivo existe y está en el directorio permitido
+    if (file_exists($filepath) && strpos(realpath($filepath), realpath($directory)) === 0) {
+        if (unlink($filepath)) {
+            return ['success' => true, 'message' => 'Archivo eliminado correctamente'];
+        } else {
+            return ['success' => false, 'message' => 'Error al eliminar el archivo'];
+        }
+    }
+    
+    return ['success' => false, 'message' => 'Archivo no encontrado o ruta inválida'];
+}
+
+// Función para renombrar archivo
+function renameFile($oldName, $newName, $directory = 'uploads/') {
+    $oldPath = $directory . basename($oldName);
+    $newPath = $directory . basename($newName);
+    
+    // Verificar que el archivo original existe
+    if (!file_exists($oldPath)) {
+        return ['success' => false, 'message' => 'Archivo original no encontrado'];
+    }
+    
+    // Verificar que el nuevo nombre no existe
+    if (file_exists($newPath)) {
+        return ['success' => false, 'message' => 'Ya existe un archivo con ese nombre'];
+    }
+    
+    // Verificar que ambos archivos están en el directorio permitido
+    if (strpos(realpath(dirname($oldPath)), realpath($directory)) !== 0) {
+        return ['success' => false, 'message' => 'Operación no permitida'];
+    }
+    
+    // Validar nombre de archivo (sin caracteres peligrosos)
+    if (preg_match('/[<>:"|*?\\\\\/]/', $newName)) {
+        return ['success' => false, 'message' => 'El nombre contiene caracteres no válidos'];
+    }
+    
+    if (rename($oldPath, $newPath)) {
+        return ['success' => true, 'message' => 'Archivo renombrado correctamente'];
+    } else {
+        return ['success' => false, 'message' => 'Error al renombrar el archivo'];
+    }
+}
+
+// Función para obtener el icono según la extensión del archivo
+function getFileIcon($extension) {
+    $icons = [
+        'pdf' => '📄',
+        'doc' => '📝', 'docx' => '📝',
+        'xls' => '📊', 'xlsx' => '📊',
+        'ppt' => '📺', 'pptx' => '📺',
+        'txt' => '📃',
+        'jpg' => '🖼️', 'jpeg' => '🖼️', 'png' => '🖼️', 'gif' => '🖼️', 'bmp' => '🖼️',
+        'mp4' => '🎬', 'avi' => '🎬', 'mkv' => '🎬', 'mov' => '🎬',
+        'mp3' => '🎵', 'wav' => '🎵', 'flac' => '🎵',
+        'zip' => '📦', 'rar' => '📦', '7z' => '📦',
+        'html' => '🌐', 'css' => '🎨', 'js' => '⚡',
+        'php' => '🐘', 'py' => '🐍', 'java' => '☕'
+    ];
+    
+    return $icons[$extension] ?? '📄';
 }
 
 // Mensajes para mostrar al usuario
@@ -94,6 +195,35 @@ $message = '';
 $message_type = 'info';
 $server_info = getServerInfo();
 $debug_info = [];
+$uploaded_files = [];
+
+// Manejar acciones AJAX para eliminar y renombrar archivos
+if (isset($_POST['action'])) {
+    header('Content-Type: application/json');
+    
+    switch ($_POST['action']) {
+        case 'delete':
+            $filename = $_POST['filename'] ?? '';
+            $result = deleteFile($filename);
+            echo json_encode($result);
+            exit;
+            
+        case 'rename':
+            $oldName = $_POST['oldName'] ?? '';
+            $newName = $_POST['newName'] ?? '';
+            $result = renameFile($oldName, $newName);
+            echo json_encode($result);
+            exit;
+            
+        case 'getFiles':
+            $files = getUploadedFiles();
+            echo json_encode(['files' => $files]);
+            exit;
+    }
+}
+
+// Obtener lista de archivos subidos
+$uploaded_files = getUploadedFiles();
 
 // Verificar si el formulario ha sido enviado
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
@@ -220,9 +350,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
         .main-container {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr 400px;
             gap: 30px;
-            max-width: 1200px;
+            max-width: 1400px;
             width: 100%;
         }
 
@@ -239,8 +369,239 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
 
         .info-container {
-            max-height: 500px;
+            max-height: 700px;
             overflow-y: auto;
+        }
+
+        /* Estilos del Gestor de Archivos */
+        .file-manager {
+            margin-top: 30px;
+            text-align: left;
+        }
+
+        .file-manager h3 {
+            color: #333;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 1.4em;
+        }
+
+        .no-files {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+            font-size: 1.1em;
+        }
+
+        .files-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .file-card {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 15px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .file-card:hover {
+            border-color: #007bff;
+            background: #e3f2fd;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,123,255,0.15);
+        }
+
+        .file-card.selected {
+            border-color: #28a745;
+            background: #d4edda;
+        }
+
+        .file-icon {
+            font-size: 2.5em;
+            flex-shrink: 0;
+        }
+
+        .file-info {
+            flex-grow: 1;
+            min-width: 0;
+        }
+
+        .file-name {
+            font-weight: bold;
+            color: #333;
+            font-size: 1em;
+            margin-bottom: 5px;
+            word-break: break-word;
+        }
+
+        .file-details {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
+        .file-size {
+            font-weight: 500;
+        }
+
+        .file-date {
+            font-style: italic;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 8px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .file-card:hover .file-actions {
+            opacity: 1;
+        }
+
+        .btn-action {
+            background: none;
+            border: none;
+            font-size: 1.2em;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 5px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-action:hover {
+            background: rgba(255,255,255,0.8);
+            transform: scale(1.1);
+        }
+
+        .btn-download:hover { color: #007bff; }
+        .btn-rename:hover { color: #ffc107; }
+        .btn-delete:hover { color: #dc3545; }
+
+        .files-actions {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn-refresh, .btn-select-all, .btn-delete-selected {
+            background: linear-gradient(45deg, #6c757d, #495057);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+        }
+
+        .btn-refresh:hover {
+            background: linear-gradient(45deg, #5a6268, #343a40);
+            transform: translateY(-2px);
+        }
+
+        .btn-select-all:hover {
+            background: linear-gradient(45deg, #007bff, #0056b3);
+        }
+
+        .btn-delete-selected {
+            background: linear-gradient(45deg, #dc3545, #c82333);
+        }
+
+        .btn-delete-selected:hover {
+            background: linear-gradient(45deg, #c82333, #a71e2a);
+        }
+
+        /* Modal para renombrar */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background-color: #fff;
+            margin: 15% auto;
+            padding: 30px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: modalSlide 0.3s ease;
+        }
+
+        @keyframes modalSlide {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .modal h3 {
+            margin-bottom: 20px;
+            color: #333;
+            text-align: center;
+        }
+
+        .modal input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+
+        .modal input[type="text"]:focus {
+            border-color: #007bff;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(0,123,255,0.1);
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .modal-buttons button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-cancel {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-confirm {
+            background: linear-gradient(45deg, #28a745, #20c997);
+            color: white;
+        }
+
+        .btn-cancel:hover, .btn-confirm:hover {
+            transform: translateY(-2px);
         }
 
         h2 {
@@ -424,6 +785,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             .container, .info-container {
                 padding: 20px;
             }
+
+            .files-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .file-card {
+                padding: 12px;
+            }
+
+            .files-actions {
+                flex-direction: column;
+                align-items: center;
+            }
         }
     </style>
 </head>
@@ -466,6 +840,53 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <?php endif; ?>
             </div>
         <?php endif; ?>
+
+        <!-- Gestor de Archivos -->
+        <div class="file-manager" id="fileManager">
+            <h3>📂 Archivos Subidos (<?php echo count($uploaded_files); ?>)</h3>
+            
+            <?php if (empty($uploaded_files)): ?>
+                <div class="no-files">
+                    <p>🗂️ No hay archivos subidos todavía</p>
+                </div>
+            <?php else: ?>
+                <div class="files-grid" id="filesGrid">
+                    <?php foreach ($uploaded_files as $file): ?>
+                        <div class="file-card" data-filename="<?php echo htmlspecialchars($file['name']); ?>">
+                            <div class="file-icon">
+                                <?php echo getFileIcon($file['extension']); ?>
+                            </div>
+                            <div class="file-info">
+                                <div class="file-name" title="<?php echo htmlspecialchars($file['name']); ?>">
+                                    <?php echo htmlspecialchars(strlen($file['name']) > 20 ? substr($file['name'], 0, 17) . '...' : $file['name']); ?>
+                                </div>
+                                <div class="file-details">
+                                    <div class="file-size"><?php echo formatBytes($file['size']); ?></div>
+                                    <div class="file-date"><?php echo date('d/m/Y H:i', $file['modified']); ?></div>
+                                </div>
+                            </div>
+                            <div class="file-actions">
+                                <button class="btn-action btn-download" onclick="downloadFile('<?php echo htmlspecialchars($file['name']); ?>')" title="Descargar">
+                                    ⬇️
+                                </button>
+                                <button class="btn-action btn-rename" onclick="renameFile('<?php echo htmlspecialchars($file['name']); ?>')" title="Renombrar">
+                                    ✏️
+                                </button>
+                                <button class="btn-action btn-delete" onclick="deleteFile('<?php echo htmlspecialchars($file['name']); ?>')" title="Eliminar">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                
+                <div class="files-actions">
+                    <button class="btn-refresh" onclick="refreshFiles()">🔄 Actualizar</button>
+                    <button class="btn-select-all" onclick="selectAllFiles()">☑️ Seleccionar todo</button>
+                    <button class="btn-delete-selected" onclick="deleteSelectedFiles()" style="display: none;">🗑️ Eliminar seleccionados</button>
+                </div>
+            <?php endif; ?>
+        </div>
     </div>
 
     <div class="info-container">
@@ -527,6 +948,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     </div>
 </div>
 
+<!-- Modal para renombrar archivos -->
+<div id="renameModal" class="modal">
+    <div class="modal-content">
+        <h3>✏️ Renombrar Archivo</h3>
+        <input type="text" id="newFileName" placeholder="Nuevo nombre del archivo">
+        <div class="modal-buttons">
+            <button class="btn-cancel" onclick="closeRenameModal()">Cancelar</button>
+            <button class="btn-confirm" onclick="confirmRename()">Renombrar</button>
+        </div>
+    </div>
+</div>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const fileInput = document.getElementById('archivoParaSubir');
@@ -538,6 +971,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const progressBar = document.getElementById('progressBar');
     const progressFill = document.getElementById('progressFill');
     const form = document.getElementById('uploadForm');
+
+    let selectedFiles = new Set();
+    let currentFileToRename = '';
 
     // Manejo del drag & drop
     uploadArea.addEventListener('dragover', function(e) {
@@ -601,6 +1037,210 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             progressFill.style.width = progress + '%';
         }, 100);
+    });
+
+    // Funciones del gestor de archivos
+    window.downloadFile = function(filename) {
+        window.open('download.php?file=' + encodeURIComponent(filename), '_blank');
+    };
+
+    window.deleteFile = function(filename) {
+        if (confirm('¿Estás seguro de que quieres eliminar "' + filename + '"?')) {
+            fetch('index.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'action=delete&filename=' + encodeURIComponent(filename)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ ' + data.message, 'success');
+                    refreshFiles();
+                } else {
+                    showNotification('❌ ' + data.message, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ Error de conexión', 'error');
+                console.error('Error:', error);
+            });
+        }
+    };
+
+    window.renameFile = function(filename) {
+        currentFileToRename = filename;
+        document.getElementById('newFileName').value = filename;
+        document.getElementById('renameModal').style.display = 'block';
+        
+        // Seleccionar el nombre sin la extensión
+        const input = document.getElementById('newFileName');
+        const lastDotIndex = filename.lastIndexOf('.');
+        if (lastDotIndex > 0) {
+            setTimeout(() => {
+                input.setSelectionRange(0, lastDotIndex);
+                input.focus();
+            }, 100);
+        }
+    };
+
+    window.closeRenameModal = function() {
+        document.getElementById('renameModal').style.display = 'none';
+        currentFileToRename = '';
+    };
+
+    window.confirmRename = function() {
+        const newName = document.getElementById('newFileName').value.trim();
+        
+        if (newName === '') {
+            alert('Por favor ingresa un nombre válido.');
+            return;
+        }
+
+        if (newName === currentFileToRename) {
+            closeRenameModal();
+            return;
+        }
+
+        fetch('index.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'action=rename&oldName=' + encodeURIComponent(currentFileToRename) + '&newName=' + encodeURIComponent(newName)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('✅ ' + data.message, 'success');
+                refreshFiles();
+                closeRenameModal();
+            } else {
+                showNotification('❌ ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            showNotification('❌ Error de conexión', 'error');
+            console.error('Error:', error);
+        });
+    };
+
+    window.refreshFiles = function() {
+        location.reload();
+    };
+
+    window.selectAllFiles = function() {
+        const fileCards = document.querySelectorAll('.file-card');
+        const allSelected = selectedFiles.size === fileCards.length;
+        
+        if (allSelected) {
+            // Deseleccionar todos
+            selectedFiles.clear();
+            fileCards.forEach(card => card.classList.remove('selected'));
+            document.querySelector('.btn-select-all').textContent = '☑️ Seleccionar todo';
+            document.querySelector('.btn-delete-selected').style.display = 'none';
+        } else {
+            // Seleccionar todos
+            fileCards.forEach(card => {
+                const filename = card.dataset.filename;
+                selectedFiles.add(filename);
+                card.classList.add('selected');
+            });
+            document.querySelector('.btn-select-all').textContent = '❌ Deseleccionar todo';
+            document.querySelector('.btn-delete-selected').style.display = 'inline-block';
+        }
+    };
+
+    window.deleteSelectedFiles = function() {
+        if (selectedFiles.size === 0) return;
+        
+        if (confirm(`¿Estás seguro de que quieres eliminar ${selectedFiles.size} archivo(s) seleccionado(s)?`)) {
+            const promises = Array.from(selectedFiles).map(filename => {
+                return fetch('index.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'action=delete&filename=' + encodeURIComponent(filename)
+                }).then(response => response.json());
+            });
+
+            Promise.all(promises).then(results => {
+                const successful = results.filter(r => r.success).length;
+                const failed = results.length - successful;
+                
+                if (successful > 0) {
+                    showNotification(`✅ ${successful} archivo(s) eliminado(s) correctamente`, 'success');
+                }
+                if (failed > 0) {
+                    showNotification(`❌ ${failed} archivo(s) no pudieron ser eliminados`, 'error');
+                }
+                
+                refreshFiles();
+            });
+        }
+    };
+
+    // Manejar clicks en las tarjetas de archivo para selección múltiple
+    document.addEventListener('click', function(e) {
+        if (e.target.closest('.file-card') && !e.target.closest('.btn-action')) {
+            const card = e.target.closest('.file-card');
+            const filename = card.dataset.filename;
+            
+            if (e.ctrlKey || e.metaKey) {
+                // Selección múltiple
+                if (selectedFiles.has(filename)) {
+                    selectedFiles.delete(filename);
+                    card.classList.remove('selected');
+                } else {
+                    selectedFiles.add(filename);
+                    card.classList.add('selected');
+                }
+                
+                // Actualizar botones
+                if (selectedFiles.size > 0) {
+                    document.querySelector('.btn-delete-selected').style.display = 'inline-block';
+                } else {
+                    document.querySelector('.btn-delete-selected').style.display = 'none';
+                }
+            }
+        }
+    });
+
+    function showNotification(message, type) {
+        // Crear y mostrar notificación temporal
+        const notification = document.createElement('div');
+        notification.className = `message ${type}`;
+        notification.innerHTML = `<strong>${message}</strong>`;
+        notification.style.position = 'fixed';
+        notification.style.top = '20px';
+        notification.style.right = '20px';
+        notification.style.zIndex = '9999';
+        notification.style.maxWidth = '400px';
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.remove();
+        }, 4000);
+    }
+
+    // Cerrar modal al hacer clic fuera
+    window.addEventListener('click', function(e) {
+        const modal = document.getElementById('renameModal');
+        if (e.target === modal) {
+            closeRenameModal();
+        }
+    });
+
+    // Manejar Enter en el campo de renombrar
+    document.getElementById('newFileName').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            confirmRename();
+        } else if (e.key === 'Escape') {
+            closeRenameModal();
+        }
     });
 });
 </script>
